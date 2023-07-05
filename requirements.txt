@@ -1,0 +1,4 @@
+torch = 1.13.1
+transformers==4.29.1
+seqeval==1.2.2
+pytorch-crf==0.7.2
