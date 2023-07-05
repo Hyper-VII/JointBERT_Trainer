@@ -1,96 +1,84 @@
-# JointBERT
+## 项目简介
 
-(Unofficial) Pytorch implementation of `JointBERT`: [BERT for Joint Intent Classification and Slot Filling](https://arxiv.org/abs/1902.10909)
+本项目采用huggingface中Trainer库实现BERT模型在意图识别和槽填充任务上的微调过程。模型采用[JointBERT](https://github.com/monologg/JointBERT)，该模型利用BERT同时实现意图识别和槽位填充两个任务。
+数据采用[ATIS](https://github.com/monologg/JointBERT)公开数据。
 
-## Model Architecture
+### 环境配置
+- python = 3.7.16
+- torch = 1.13.1 (with torchvision=0.14.1)
+- seqeval = 1.2.2
+- pytorch-crf = 0.7.2
+- transformers = 4.29.1
+- CUDA vision = 11.7
 
-<p float="left" align="center">
-    <img width="600" src="https://user-images.githubusercontent.com/28896432/68875755-b2f92900-0746-11ea-8819-401d60e4185f.png" />  
-</p>
+### 代码结构
+- datasets
+  - atis: 保存train/dev/test三个压缩文件，每个文件包含文本，槽位标签和意图标签
+- evaluate: 
+  - accuracy: 意图识别准确率
+  - seqeval: 槽填充（序列标注）评估方法
+- model: JointBERT等模型
+- outputs
+  - atis_model: atis数据集的运行结果，包括模型参数、训练过程和评估过程
+- atis.py: 数据处理脚本，作为load_dataset函数的参数，用于加载数据集 
+- run_jointbert.py: 基于Trainer对JointBERT模型进行微调
 
-- Predict `intent` and `slot` at the same time from **one BERT model** (=Joint model)
-- total_loss = intent_loss + coef \* slot_loss (Change coef with `--slot_loss_coef` option)
-- **If you want to use CRF layer, give `--use_crf` option**
+### 数据集
+本项目采用atis公开数据集，包括文本信息seq.in，意图标签label和槽位标签seq.out三个文件。
 
-## Dependencies
+### 数据处理脚本
+#### atis数据处理流程
+1. 提供数据文件加载地址_URLs，本项目将三个数据集打包成三个zip文件放入datasets文件夹中，并将文件路径写入变量_URLs
+2. 创建Atis数据类，需要继承datasets.GeneratorBasedBuilder
+3. 类中包含_info、_split_generators和_generate_examples三个函数，根据实际情况进行编写
+4. _info函数介绍数据的基本信息，_split_generators函数负责解析_URLs地址，_generate_examples函数负责根据解析后的地址，结合数据集自身结构逐个读取数据，
+并使用yield返回，通常解析后的地址为\.cache\huggingface\datasets\downloads\extracted\your data's HASH\。
+5. 关于load_dataset()函数的详细内容可参考(https://zhuanlan.zhihu.com/p/634098463)
 
-- python>=3.6
-- torch==1.6.0
-- transformers==3.0.2
-- seqeval==0.0.12
-- pytorch-crf==0.7.2
-
-## Dataset
-
-|       | Train  | Dev | Test | Intent Labels | Slot Labels |
-| ----- | ------ | --- | ---- | ------------- | ----------- |
-| ATIS  | 4,478  | 500 | 893  | 21            | 120         |
-| Snips | 13,084 | 700 | 700  | 7             | 72          |
-
-- The number of labels are based on the _train_ dataset.
-- Add `UNK` for labels (For intent and slot labels which are only shown in _dev_ and _test_ dataset)
-- Add `PAD` for slot label
-
-## Training & Evaluation
-
-```bash
-$ python3 main.py --task {task_name} \
-                  --model_type {model_type} \
-                  --model_dir {model_dir_name} \
-                  --do_train --do_eval \
-                  --use_crf
-
-# For ATIS
-$ python3 main.py --task atis \
-                  --model_type bert \
-                  --model_dir atis_model \
-                  --do_train --do_eval
-# For Snips
-$ python3 main.py --task snips \
-                  --model_type bert \
-                  --model_dir snips_model \
-                  --do_train --do_eval
+#### 加载数据
+采用datasets.load_dataset()函数来读取数据，其中数据处理脚本atis.py作为参数传入load_dataset()函数中，
+用于加载模型训练需要的数据集。调用格式如下：
+```python
+import datasets
+data = datasets.load_dataset("atis.py")
 ```
-
-## Prediction
-
+### 模型微调
+可以使用如下命令实现模型的微调过程：
 ```bash
-$ python3 predict.py --input_file {INPUT_FILE_PATH} --output_file {OUTPUT_FILE_PATH} --model_dir {SAVED_CKPT_PATH}
+$ python run_jointbert.py --dataset_name ./atis.py \
+                        --max_seq_length="50" \
+                        --model_name_or_path {model_name} \
+                        --use_crf False \
+                        --output_dir outputs/atis_model \
+                        --overwrite_output_dir \
+                        --num_train_epochs="10" \
+                        --do_train --do_eval \
+                        --per_device_train_batch_size="16" \
+                        --per_device_eval_batch_size="16" \
+                        --learning_rate="5e-5" \
+                        --weight_decay="0.001" \
+                        --warmup_step="100" \
+                        --logging_steps="200" \
+                        --save_steps="200"
 ```
+训练参数配置:
+- 数据设置: 
+  - dataset_name: 数据集处理脚本
+  - max_seq_length: 最长文本序列
+- 模型设置:
+  - model_name_or_path: 预训练模型，模型名称如bert-base-uncased，或本地文件路径如/your path/bert_pretrain_model
+  - use_crf: 模型是否使用crf
+- 训练设置:
+  - output_dir: 输出路径
+  - overwrite_output_dir: 是否覆盖输出路径
+  - num_train_epochs: 训练次数
+  - learning_rate: 学习率
+  - weight_decay: 权重衰减
+  - warmup_step: warmup步数
+  - logging_steps: 输出日志的步数
+  - save_steps: 保存checkpoint的步数
 
-## Results
-
-- Run 5 ~ 10 epochs (Record the best result)
-- Only test with `uncased` model
-- ALBERT xxlarge sometimes can't converge well for slot prediction.
-
-|           |                  | Intent acc (%) | Slot F1 (%) | Sentence acc (%) |
-| --------- | ---------------- | -------------- | ----------- | ---------------- |
-| **Snips** | BERT             | **99.14**      | 96.90       | 93.00            |
-|           | BERT + CRF       | 98.57          | **97.24**   | **93.57**        |
-|           | DistilBERT       | 98.00          | 96.10       | 91.00            |
-|           | DistilBERT + CRF | 98.57          | 96.46       | 91.85            |
-|           | ALBERT           | 98.43          | 97.16       | 93.29            |
-|           | ALBERT + CRF     | 99.00          | 96.55       | 92.57            |
-| **ATIS**  | BERT             | 97.87          | 95.59       | 88.24            |
-|           | BERT + CRF       | **97.98**      | 95.93       | 88.58            |
-|           | DistilBERT       | 97.76          | 95.50       | 87.68            |
-|           | DistilBERT + CRF | 97.65          | 95.89       | 88.24            |
-|           | ALBERT           | 97.64          | 95.78       | 88.13            |
-|           | ALBERT + CRF     | 97.42          | **96.32**   | **88.69**        |
-
-## Updates
-
-- 2019/12/03: Add DistilBert and RoBERTa result
-- 2019/12/14: Add Albert (large v1) result
-- 2019/12/22: Available to predict sentences
-- 2019/12/26: Add Albert (xxlarge v1) result
-- 2019/12/29: Add CRF option
-- 2019/12/30: Available to check `sentence-level semantic frame accuracy`
-- 2020/01/23: Only show the result related with uncased model
-- 2020/04/03: Update with new prediction code
-
-## References
-
+### Reference
 - [Huggingface Transformers](https://github.com/huggingface/transformers)
 - [pytorch-crf](https://github.com/kmkurn/pytorch-crf)
+- [JointBERT](https://github.com/monologg/JointBERT)
